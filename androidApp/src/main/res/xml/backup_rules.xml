@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Back up the database -->
+    <include domain="database" path="alerts.db"/>
+    
+    <!-- Back up configuration files -->
+    <include domain="files" path="config/"/>
+    
+    <!-- Back up shared preferences -->
+    <include domain="sharedpref" path="app_settings.xml"/>
+    
+    <!-- Exclude cache and temporary files -->
+    <exclude domain="cache"/>
+    <exclude domain="files" path="temp/"/>
+</full-backup-content>
