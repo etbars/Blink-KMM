@@ -1,0 +1,16 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /Users/ethan/AndroidStudioProjects/AlertAppKMM/shared/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest9324184264456724139.xml:2:13-83
+INJECTED from /Users/ethan/AndroidStudioProjects/AlertAppKMM/shared/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest9324184264456724139.xml:2:13-83
+	package
+		INJECTED from /Users/ethan/AndroidStudioProjects/AlertAppKMM/shared/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest9324184264456724139.xml
+	xmlns:android
+		ADDED from /Users/ethan/AndroidStudioProjects/AlertAppKMM/shared/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest9324184264456724139.xml:2:23-81
+uses-sdk
+INJECTED from /Users/ethan/AndroidStudioProjects/AlertAppKMM/shared/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest9324184264456724139.xml reason: use-sdk injection requested
+INJECTED from /Users/ethan/AndroidStudioProjects/AlertAppKMM/shared/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest9324184264456724139.xml
+INJECTED from /Users/ethan/AndroidStudioProjects/AlertAppKMM/shared/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest9324184264456724139.xml
+	android:targetSdkVersion
+		INJECTED from /Users/ethan/AndroidStudioProjects/AlertAppKMM/shared/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest9324184264456724139.xml
+	android:minSdkVersion
+		INJECTED from /Users/ethan/AndroidStudioProjects/AlertAppKMM/shared/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest9324184264456724139.xml

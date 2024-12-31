@@ -1,0 +1,6 @@
+[
+    {
+        "merged": "com.example.alertapp.shared-merged_res-28:/drawable-v23/abc_control_background_material.xml",
+        "source": "com.example.alertapp.shared-appcompat-1.6.1-23:/drawable-v23/abc_control_background_material.xml"
+    }
+]

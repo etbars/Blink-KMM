@@ -1,0 +1,18 @@
+[
+    {
+        "merged": "com.example.alertapp.shared-merged_res-28:/layout-v21/notification_action_tombstone.xml",
+        "source": "com.example.alertapp.shared-core-1.9.0-24:/layout-v21/notification_action_tombstone.xml"
+    },
+    {
+        "merged": "com.example.alertapp.shared-merged_res-28:/layout-v21/notification_template_icon_group.xml",
+        "source": "com.example.alertapp.shared-core-1.9.0-24:/layout-v21/notification_template_icon_group.xml"
+    },
+    {
+        "merged": "com.example.alertapp.shared-merged_res-28:/layout-v21/notification_template_custom_big.xml",
+        "source": "com.example.alertapp.shared-core-1.9.0-24:/layout-v21/notification_template_custom_big.xml"
+    },
+    {
+        "merged": "com.example.alertapp.shared-merged_res-28:/layout-v21/notification_action.xml",
+        "source": "com.example.alertapp.shared-core-1.9.0-24:/layout-v21/notification_action.xml"
+    }
+]
