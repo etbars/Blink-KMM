@@ -2,6 +2,7 @@ package com.example.alertapp.models.content
 
 import kotlinx.serialization.Serializable
 import kotlinx.datetime.Instant
+import com.example.alertapp.enums.Sentiment
 
 @Serializable
 sealed class ContentData {
@@ -57,20 +58,18 @@ enum class Platform {
 }
 
 @Serializable
-enum class Sentiment {
-    POSITIVE,
-    NEUTRAL,
-    NEGATIVE
-}
-
-@Serializable
 enum class ContentSource {
     NEWS,      // News articles from various sources
     SOCIAL,    // Social media content
     RSS,       // RSS feed sources
     CUSTOM;    // Custom content sources
 
-    override fun toString(): String = name.lowercase()
+    override fun toString(): String = when (this) {
+        NEWS -> "News"
+        SOCIAL -> "Social Media"
+        RSS -> "RSS Feed"
+        CUSTOM -> "Custom Source"
+    }
 
     companion object {
         fun getDisplayName(source: ContentSource): String = when (source) {

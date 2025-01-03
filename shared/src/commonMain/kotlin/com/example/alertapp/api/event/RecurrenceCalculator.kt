@@ -1,122 +1,77 @@
 package com.example.alertapp.api.event
 
-import com.example.alertapp.models.event.EventData
-import com.example.alertapp.models.event.RecurrenceRule
+import com.example.alertapp.models.Event
+import com.example.alertapp.models.RecurrenceRule
+import com.example.alertapp.models.RecurrenceFrequency
+import com.example.alertapp.models.DayOfWeek
 import kotlinx.datetime.*
-import kotlin.time.Duration.Companion.days
 
 class RecurrenceCalculator {
-    fun expandRecurrence(
-        event: EventData.ScheduledEvent,
-        timeRange: ClosedRange<Instant>
-    ): List<EventData.ScheduledEvent> {
-        val rule = event.recurrence ?: return listOf(event)
-        val events = mutableListOf<EventData.ScheduledEvent>()
-        var currentDate = event.startTime
-        var count = 0
-
-        while (currentDate <= timeRange.endInclusive && 
-               (rule.count == null || count < rule.count) &&
-               (rule.endDate == null || currentDate <= rule.endDate)) {
-            
-            if (currentDate >= timeRange.start) {
-                events.add(event.copy(
-                    id = "${event.id}_${count}",
-                    startTime = currentDate,
-                    endTime = event.endTime?.let { end ->
-                        currentDate + (end - event.startTime)
-                    }
-                ))
-            }
-
-            currentDate = when (rule.frequency) {
-                RecurrenceRule.Frequency.DAILY -> {
-                    val nextDate = currentDate.plus(rule.interval.days)
-                    if (rule.daysOfWeek.isNotEmpty()) {
-                        findNextMatchingDay(nextDate, rule.daysOfWeek)
-                    } else {
-                        nextDate
-                    }
-                }
-                RecurrenceRule.Frequency.WEEKLY -> {
-                    if (rule.daysOfWeek.isNotEmpty()) {
-                        findNextWeeklyDate(currentDate, rule.daysOfWeek, rule.interval)
-                    } else {
-                        currentDate.plus((7 * rule.interval).days)
-                    }
-                }
-                RecurrenceRule.Frequency.MONTHLY -> {
-                    val localDate = currentDate.toLocalDateTime(TimeZone.currentSystemDefault())
-                    val nextMonth = localDate.month.plus(rule.interval)
-                    val nextYear = localDate.year + (nextMonth.ordinal / 12)
-                    val adjustedMonth = nextMonth.plus(-(nextMonth.ordinal / 12) * 12)
-                    
-                    LocalDateTime(
-                        nextYear,
-                        adjustedMonth,
-                        minOf(localDate.dayOfMonth, adjustedMonth.length(Year(nextYear).isLeap)),
-                        localDate.hour,
-                        localDate.minute,
-                        localDate.second,
-                        localDate.nanosecond
-                    ).toInstant(TimeZone.currentSystemDefault())
-                }
-                RecurrenceRule.Frequency.YEARLY -> {
-                    val localDate = currentDate.toLocalDateTime(TimeZone.currentSystemDefault())
-                    LocalDateTime(
-                        localDate.year + rule.interval,
-                        localDate.month,
-                        localDate.dayOfMonth,
-                        localDate.hour,
-                        localDate.minute,
-                        localDate.second,
-                        localDate.nanosecond
-                    ).toInstant(TimeZone.currentSystemDefault())
-                }
-            }
-            count++
+    fun calculateNextOccurrence(event: Event): Instant? {
+        val rule = event.recurrenceRule ?: return null
+        val now = Clock.System.now()
+        
+        return when (rule.frequency) {
+            RecurrenceFrequency.DAILY -> calculateNextDaily(event.startDate, now, rule)
+            RecurrenceFrequency.WEEKLY -> calculateNextWeekly(event.startDate, now, rule)
+            RecurrenceFrequency.MONTHLY -> calculateNextMonthly(event.startDate, now, rule)
+            RecurrenceFrequency.YEARLY -> calculateNextYearly(event.startDate, now, rule)
         }
-
-        return events
     }
 
-    private fun findNextMatchingDay(
-        date: Instant,
-        daysOfWeek: Set<DayOfWeek>
-    ): Instant {
-        var currentDate = date
-        while (!daysOfWeek.contains(currentDate.toLocalDateTime(TimeZone.currentSystemDefault()).dayOfWeek)) {
-            currentDate = currentDate.plus(1.days)
+    private fun calculateNextDaily(startDate: Instant, now: Instant, rule: RecurrenceRule): Instant {
+        var next = startDate
+        while (next <= now) {
+            next = next.plus(DateTimePeriod(days = rule.interval), TimeZone.currentSystemDefault())
         }
-        return currentDate
+        return next
     }
 
-    private fun findNextWeeklyDate(
-        date: Instant,
-        daysOfWeek: Set<DayOfWeek>,
-        interval: Int
-    ): Instant {
-        val timezone = TimeZone.currentSystemDefault()
-        var currentDate = date.plus(1.days)
-        val startDayOfWeek = date.toLocalDateTime(timezone).dayOfWeek
-        var weekCount = 0
+    private fun calculateNextWeekly(startDate: Instant, now: Instant, rule: RecurrenceRule): Instant {
+        if (rule.daysOfWeek.isEmpty()) {
+            var next = startDate
+            while (next <= now) {
+                next = next.plus(DateTimePeriod(days = 7 * rule.interval), TimeZone.currentSystemDefault())
+            }
+            return next
+        }
 
+        var candidateDate = now
+        val timeZone = TimeZone.currentSystemDefault()
         while (true) {
-            val currentDayOfWeek = currentDate.toLocalDateTime(timezone).dayOfWeek
-            if (currentDayOfWeek == startDayOfWeek) {
-                weekCount++
+            candidateDate = candidateDate.plus(DateTimePeriod(days = 1), timeZone)
+            val dayOfWeek = candidateDate.toLocalDateTime(timeZone).dayOfWeek
+            val modelDayOfWeek = when (dayOfWeek) {
+                kotlinx.datetime.DayOfWeek.MONDAY -> DayOfWeek.MONDAY
+                kotlinx.datetime.DayOfWeek.TUESDAY -> DayOfWeek.TUESDAY
+                kotlinx.datetime.DayOfWeek.WEDNESDAY -> DayOfWeek.WEDNESDAY
+                kotlinx.datetime.DayOfWeek.THURSDAY -> DayOfWeek.THURSDAY
+                kotlinx.datetime.DayOfWeek.FRIDAY -> DayOfWeek.FRIDAY
+                kotlinx.datetime.DayOfWeek.SATURDAY -> DayOfWeek.SATURDAY
+                kotlinx.datetime.DayOfWeek.SUNDAY -> DayOfWeek.SUNDAY
+                else -> DayOfWeek.MONDAY // Default to Monday if an unknown day is encountered
             }
-
-            if (weekCount < interval) {
-                currentDate = currentDate.plus(1.days)
-                continue
+            if (modelDayOfWeek in rule.daysOfWeek) {
+                return candidateDate
             }
-
-            if (daysOfWeek.contains(currentDayOfWeek)) {
-                return currentDate
-            }
-
-            currentDate = currentDate.plus(1.days)
         }
+    }
+
+    private fun calculateNextMonthly(startDate: Instant, now: Instant, rule: RecurrenceRule): Instant {
+        var next = startDate
+        val timeZone = TimeZone.currentSystemDefault()
+        while (next <= now) {
+            next = next.plus(DateTimePeriod(months = rule.interval), timeZone)
+        }
+        return next
+    }
+
+    private fun calculateNextYearly(startDate: Instant, now: Instant, rule: RecurrenceRule): Instant {
+        var next = startDate
+        val timeZone = TimeZone.currentSystemDefault()
+        while (next <= now) {
+            next = next.plus(DateTimePeriod(years = rule.interval), timeZone)
+        }
+        return next
     }
 }

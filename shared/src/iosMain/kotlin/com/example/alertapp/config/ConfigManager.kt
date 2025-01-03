@@ -1,7 +1,10 @@
 package com.example.alertapp.config
 
-import platform.Foundation.*
 import com.example.alertapp.validation.ValidationResult
+import kotlinx.serialization.json.Json
+import com.example.alertapp.config.migration.ConfigMigrationManager
+import com.example.alertapp.config.migration.v1_0_0.InitialMigration
+import platform.Foundation.*
 
 /**
  * iOS implementation of ConfigManager.
@@ -10,86 +13,56 @@ actual class ConfigManager {
     private val userDefaults = NSUserDefaults.standardUserDefaults
 
     actual fun getAppConfig(): AlertAppConfig {
-        val configString = userDefaults.stringForKey(APP_CONFIG_KEY)
-        val config = if (configString != null) {
-            json.decodeFromString(AlertAppConfig.serializer(), configString)
-        } else {
-            AlertAppConfig()
-        }
-        
-        val validation = ConfigValidator.validateAppConfig(config)
-        if (!validation.isValid) {
-            throw IllegalStateException("Invalid app configuration: ${validation.getFormattedMessages()}")
-        }
-        
-        return config
+        val jsonString = userDefaults.stringForKey(APP_CONFIG_KEY)
+            ?: throw IllegalStateException("App configuration not found")
+        return json.decodeFromString(AlertAppConfig.serializer(), jsonString)
     }
 
     actual fun getPlatformConfig(): PlatformConfig {
-        val configString = userDefaults.stringForKey(PLATFORM_CONFIG_KEY)
-        val config = if (configString != null) {
-            json.decodeFromString(PlatformConfig.serializer(), configString)
-        } else {
-            PlatformConfig()
-        }
-        
-        val validation = ConfigValidator.validatePlatformConfig(config)
-        if (!validation.isValid) {
-            throw IllegalStateException("Invalid platform configuration: ${validation.getFormattedMessages()}")
-        }
-        
-        return config
+        val jsonString = userDefaults.stringForKey(PLATFORM_CONFIG_KEY)
+            ?: throw IllegalStateException("Platform configuration not found")
+        return json.decodeFromString(PlatformConfig.serializer(), jsonString)
     }
 
     actual fun getWorkConfig(): WorkConfig {
-        val configString = userDefaults.stringForKey(WORK_CONFIG_KEY)
-        val config = if (configString != null) {
-            json.decodeFromString(WorkConfig.serializer(), configString)
-        } else {
-            WorkConfig()
-        }
-        
-        val validation = ConfigValidator.validateWorkConfig(config)
-        if (!validation.isValid) {
-            throw IllegalStateException("Invalid work configuration: ${validation.getFormattedMessages()}")
-        }
-        
-        return config
+        val jsonString = userDefaults.stringForKey(WORK_CONFIG_KEY)
+            ?: throw IllegalStateException("Work configuration not found")
+        return json.decodeFromString(WorkConfig.serializer(), jsonString)
     }
 
     actual fun updateAppConfig(config: AlertAppConfig): ValidationResult {
-        val validation = ConfigValidator.validateAppConfig(config)
-        if (validation.isValid) {
-            val configString = json.encodeToString(AlertAppConfig.serializer(), config)
-            userDefaults.setObject(configString, APP_CONFIG_KEY)
-            userDefaults.synchronize()
-        }
-        return validation
+        val jsonString = json.encodeToString(AlertAppConfig.serializer(), config)
+        userDefaults.setObject(jsonString, APP_CONFIG_KEY)
+        return ValidationResult.Success
     }
 
     actual fun updatePlatformConfig(config: PlatformConfig): ValidationResult {
-        val validation = ConfigValidator.validatePlatformConfig(config)
-        if (validation.isValid) {
-            val configString = json.encodeToString(PlatformConfig.serializer(), config)
-            userDefaults.setObject(configString, PLATFORM_CONFIG_KEY)
-            userDefaults.synchronize()
-        }
-        return validation
+        val jsonString = json.encodeToString(PlatformConfig.serializer(), config)
+        userDefaults.setObject(jsonString, PLATFORM_CONFIG_KEY)
+        return ValidationResult.Success
     }
 
     actual fun updateWorkConfig(config: WorkConfig): ValidationResult {
-        val validation = ConfigValidator.validateWorkConfig(config)
-        if (validation.isValid) {
-            val configString = json.encodeToString(WorkConfig.serializer(), config)
-            userDefaults.setObject(configString, WORK_CONFIG_KEY)
-            userDefaults.synchronize()
-        }
-        return validation
+        val jsonString = json.encodeToString(WorkConfig.serializer(), config)
+        userDefaults.setObject(jsonString, WORK_CONFIG_KEY)
+        return ValidationResult.Success
     }
 
     companion object {
         private const val APP_CONFIG_KEY = "app_config"
         private const val PLATFORM_CONFIG_KEY = "platform_config"
         private const val WORK_CONFIG_KEY = "work_config"
+
+        actual val json: Json = Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+            prettyPrint = true
+        }
+
+        actual val migrationManager: ConfigMigrationManager = ConfigMigrationManager(
+            migrations = listOf(
+                InitialMigration()
+            )
+        )
     }
 }

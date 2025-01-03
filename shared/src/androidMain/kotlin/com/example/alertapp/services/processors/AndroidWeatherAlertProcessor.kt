@@ -1,64 +1,56 @@
 package com.example.alertapp.services.processors
 
-import com.example.alertapp.models.Alert
-import com.example.alertapp.models.WeatherConditionRule
-import com.example.alertapp.models.WeatherData
 import com.example.alertapp.network.services.WeatherApiService
 import com.example.alertapp.services.base.NotificationHandler
+import com.example.alertapp.services.processors.WeatherData
+import com.example.alertapp.services.processors.WeatherResult
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.datetime.Clock
 
 @Singleton
 class AndroidWeatherAlertProcessor @Inject constructor(
-    private val notificationHandler: NotificationHandler,
     private val weatherApiService: WeatherApiService,
-    private val locationProvider: LocationProvider
-) : WeatherAlertProcessor(notificationHandler, weatherApiService, locationProvider) {
+    private val notificationHandler: NotificationHandler
+) : WeatherAlertProcessor() {
 
-    override suspend fun getWeatherData(location: Location): WeatherData? {
+    override suspend fun getCurrentWeather(latitude: Double, longitude: Double): WeatherResult {
         return try {
-            weatherApiService.getWeatherData(location.latitude, location.longitude)
+            val response = weatherApiService.getCurrentWeather(latitude, longitude)
+            val weatherData = WeatherData(
+                temperature = response.temperature,
+                humidity = response.humidity.toDouble(),
+                windSpeed = response.windSpeed,
+                precipitation = response.precipitation ?: 0.0,
+                pressure = response.pressure.toDouble(),
+                cloudiness = response.cloudCover,
+                metadata = mapOf(
+                    "description" to response.description,
+                    "windDirection" to response.windDirection.toString(),
+                    "feelsLike" to response.feelsLike.toString()
+                )
+            )
+            WeatherResult.Success(weatherData)
         } catch (e: Exception) {
-            logError(Alert(), "Failed to fetch weather data", e)
-            null
+            logError("Failed to fetch weather data", e)
+            WeatherResult.Error(e.message ?: "Unknown error", e)
         }
     }
 
-    override fun getLocationFromAlert(alert: Alert): Location? {
-        val locationStr = alert.trigger.toString()
-        return locationProvider.parseLocation(locationStr)
+    override fun logWarning(message: String) {
+        Timber.w(message)
     }
 
-    override fun getConditionsFromAlert(alert: Alert): List<WeatherConditionRule> {
-        return try {
-            when (val trigger = alert.trigger) {
-                is AlertTrigger.CustomTrigger -> {
-                    trigger.parameters["conditions"]?.let { conditionsStr ->
-                        locationProvider.parseWeatherConditions(conditionsStr)
-                    } ?: emptyList()
-                }
-                else -> emptyList()
-            }
-        } catch (e: Exception) {
-            logError(alert, "Failed to parse weather conditions", e)
-            emptyList()
-        }
-    }
-
-    override fun logWarning(alert: Alert, message: String) {
-        Timber.w("Alert ${alert.id}: $message")
-    }
-
-    override fun logError(alert: Alert, message: String, error: Throwable?) {
+    override fun logError(message: String, error: Throwable?) {
         if (error != null) {
-            Timber.e(error, "Alert ${alert.id}: $message")
+            Timber.e(error, message)
         } else {
-            Timber.e("Alert ${alert.id}: $message")
+            Timber.e(message)
         }
     }
 
-    override fun logInfo(alert: Alert, message: String) {
-        Timber.i("Alert ${alert.id}: $message")
+    override fun logInfo(message: String) {
+        Timber.i(message)
     }
 }

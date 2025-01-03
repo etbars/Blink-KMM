@@ -24,7 +24,7 @@ class OpenAIClient(
 
     suspend fun chatCompletion(messages: List<ChatMessage>): ChatCompletionResponse {
         return httpClient.post("$baseUrl/chat/completions") {
-            contentType(ContentType.Application.Json)
+            contentType(io.ktor.http.ContentType.Application.Json)
             header("Authorization", "Bearer ${config.apiKey}")
             setBody(ChatCompletionRequest(
                 model = config.model,

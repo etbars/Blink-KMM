@@ -5,6 +5,7 @@ import kotlinx.serialization.json.*
 import kotlinx.datetime.Instant
 import kotlinx.datetime.Clock
 import co.touchlab.kermit.Logger
+import kotlinx.serialization.Contextual
 
 @Serializable
 data class AlertContext(
@@ -12,10 +13,10 @@ data class AlertContext(
     val userId: String,
     val lastInput: String = "",
     val patterns: List<AlertPattern> = emptyList(),
-    val metadata: Map<String, String> = emptyMap()
+    val metadata: Map<String, String> = emptyMap(),
+    @Contextual
+    val logger: Logger = Logger.withTag("AlertContext")
 ) {
-    private val logger = Logger.withTag("AlertContext")
-
     fun toJson(): String = try {
         buildJsonObject {
             put("timestamp", timestamp.toString())
@@ -32,6 +33,7 @@ data class AlertContext(
     }
 
     companion object {
+        @Contextual
         private val logger = Logger.withTag("AlertContext")
 
         fun create(userId: String): AlertContext = AlertContext(
@@ -74,10 +76,10 @@ data class AlertPattern(
     val frequency: Int = 0,
     val lastOccurrence: Instant = Clock.System.now(),
     val confidence: Double = 1.0,
-    val metadata: Map<String, String> = emptyMap()
+    val metadata: Map<String, String> = emptyMap(),
+    @Contextual
+    val logger: Logger = Logger.withTag("AlertPattern")
 ) {
-    private val logger = Logger.withTag("AlertPattern")
-
     fun toJsonObject() = try {
         buildJsonObject {
             put("type", type)
@@ -96,6 +98,7 @@ data class AlertPattern(
     }
 
     companion object {
+        @Contextual
         private val logger = Logger.withTag("AlertPattern")
 
         const val TYPE_KEYWORD = "keyword"

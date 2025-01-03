@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
+import co.touchlab.kermit.Logger
 
 /**
  * Google Drive implementation of CloudBackupProvider.
@@ -13,22 +14,27 @@ expect class GoogleDriveBackupProvider {
     /**
      * The folder name in Google Drive where backups are stored.
      */
-    private val BACKUP_FOLDER_NAME: String
+    val BACKUP_FOLDER_NAME: String
 
     /**
      * The MIME type for backup files.
      */
-    private val BACKUP_MIME_TYPE: String
+    val BACKUP_MIME_TYPE: String
 
     /**
      * JSON serializer for backups.
      */
-    private val json: Json
+    val json: Json
 
     /**
      * Current sync status.
      */
-    private val _syncStatus: MutableStateFlow<CloudSyncStatus>
+    val _syncStatus: MutableStateFlow<CloudSyncStatus>
+
+    /**
+     * Logger instance.
+     */
+    val logger: Logger
 
     /**
      * Initialize the provider.
@@ -68,7 +74,7 @@ expect class GoogleDriveBackupProvider {
     /**
      * Delete all backups from Google Drive.
      */
-    suspend fun deleteAllBackups(): Int
+    suspend fun deleteAllBackups(): Boolean
 
     /**
      * Enable automatic sync with Google Drive.

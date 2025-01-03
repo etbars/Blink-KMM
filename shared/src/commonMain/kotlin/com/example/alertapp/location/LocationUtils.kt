@@ -6,8 +6,15 @@ import kotlin.math.*
  * Utility functions for location-related calculations and formatting.
  */
 object LocationUtils {
-    private const val EARTH_RADIUS_KM = 6371.0
-    private const val EARTH_RADIUS_MILES = 3959.0
+    /**
+     * Earth's radius in kilometers, used for distance calculations.
+     */
+    const val EARTH_RADIUS_KM = 6371.0
+    
+    /**
+     * Earth's radius in miles, used for distance calculations.
+     */
+    const val EARTH_RADIUS_MILES = 3959.0
 
     /**
      * Distance units for calculations.
@@ -157,13 +164,7 @@ object LocationUtils {
     private fun formatDD(coordinates: Coordinates): String {
         val latDir = if (coordinates.latitude >= 0) "N" else "S"
         val lonDir = if (coordinates.longitude >= 0) "E" else "W"
-        return String.format(
-            "%.4f°%s, %.4f°%s",
-            abs(coordinates.latitude),
-            latDir,
-            abs(coordinates.longitude),
-            lonDir
-        )
+        return "${abs(coordinates.latitude).format(4)}°$latDir, ${abs(coordinates.longitude).format(4)}°$lonDir"
     }
 
     private fun formatDMS(coordinates: Coordinates): String {
@@ -180,10 +181,12 @@ object LocationUtils {
         val latDir = if (coordinates.latitude >= 0) "N" else "S"
         val lonDir = if (coordinates.longitude >= 0) "E" else "W"
 
-        return String.format(
-            "%d°%d'%.1f\"%s, %d°%d'%.1f\"%s",
-            latDeg, latMin, latSec, latDir,
-            lonDeg, lonMin, lonSec, lonDir
-        )
+        return "$latDeg°$latMin'${latSec.format(1)}\"$latDir, $lonDeg°$lonMin'${lonSec.format(1)}\"$lonDir"
+    }
+
+    private fun Double.format(decimals: Int): String {
+        return "%.${decimals}f".format(this)
     }
 }
+
+expect fun String.format(vararg args: Any): String

@@ -1,140 +1,143 @@
 package com.example.alertapp.models
 
+import com.example.alertapp.enums.Operator
+import com.example.alertapp.enums.Sentiment
+import com.example.alertapp.enums.ReleaseType
+import com.example.alertapp.models.weather.WeatherCondition
+import com.example.alertapp.models.weather.WeatherLocation
+import com.example.alertapp.models.content.ContentFilter
 import kotlinx.serialization.Serializable
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
+import kotlinx.serialization.SerialName
 
 @Serializable
 data class Alert(
     val id: String = "",
-    val name: String = "",
-    val description: String = "",
-    val type: AlertType = AlertType.CUSTOM,
-    val trigger: AlertTrigger = AlertTrigger.CustomTrigger(),
-    val actions: List<AlertAction> = listOf(),
-    val isActive: Boolean = true,
+    val name: String,
+    val description: String,
+    val trigger: AlertTrigger,
+    val actions: List<AlertAction> = listOf(),  
+    val priority: Priority = Priority.DEFAULT,
     val createdAt: Instant = Clock.System.now(),
-    val lastTriggered: Instant? = null,
-    val userId: String = "",
-    val checkInterval: Long = 900000, // 15 minutes in milliseconds
-    val metadata: Map<String, String> = emptyMap()
+    val updatedAt: Instant = Clock.System.now(),
+    val enabled: Boolean = true,
+    val lastTriggeredAt: Instant? = null
 )
 
 @Serializable
 sealed class AlertTrigger {
     @Serializable
+    @SerialName("price")
     data class PriceTrigger(
-        val asset: String = "",
-        val condition: PriceOperator = PriceOperator.ABOVE,
-        val threshold: Double = 0.0,
+        val asset: String,
+        val operator: Operator,
+        val threshold: Double,
         val timeframe: String = "1h"
     ) : AlertTrigger()
 
     @Serializable
+    @SerialName("content")
     data class ContentTrigger(
-        val sources: List<ContentSource> = listOf(),
-        val keywords: List<String> = listOf(),
-        val mustIncludeAll: Boolean = false,
-        val excludeKeywords: List<String> = listOf()
+        val query: String,
+        val sources: List<String> = emptyList(),
+        val authors: List<String> = emptyList(),
+        val minRating: Double? = null,
+        val sentiment: Sentiment? = null,
+        val contentType: String? = null,
+        val filter: ContentFilter? = null,
+        val keywords: List<String> = emptyList(),
+        val excludeKeywords: List<String> = emptyList()
     ) : AlertTrigger()
 
     @Serializable
+    @SerialName("release")
     data class ReleaseTrigger(
-        val creator: String = "",
-        val mediaType: MediaType = MediaType.MOVIE,
-        val conditions: Map<String, String> = mapOf()
+        val type: String,
+        val creator: String? = null,
+        val minRating: Double? = null,
+        val releaseType: ReleaseType? = null,
+        val conditions: List<String> = emptyList()
     ) : AlertTrigger()
 
     @Serializable
+    @SerialName("weather")
     data class WeatherTrigger(
-        val location: String = "",
-        val conditions: List<WeatherConditionRule> = listOf()
+        val location: WeatherLocation,
+        val conditions: List<WeatherCondition>
     ) : AlertTrigger()
 
     @Serializable
+    @SerialName("event")
     data class EventTrigger(
-        val categories: Set<String> = setOf(),
-        val locations: Set<String> = setOf(),
-        val keywords: Set<String> = setOf(),
-        val timeRange: EventTimeRange? = null,
-        val reminderBefore: Long? = null, // Duration in milliseconds
-        val excludeCancelled: Boolean = true,
-        val excludeDeclined: Boolean = true
+        val categories: List<String> = emptyList(),
+        val locations: List<String> = emptyList(),
+        val keywords: List<String> = emptyList(),
+        val timeRange: EventTimeRange? = null
     ) : AlertTrigger()
 
     @Serializable
+    @SerialName("custom")
     data class CustomTrigger(
-        val description: String = "",
-        val parameters: Map<String, String> = mapOf()
+        val description: String,
+        val parameters: Map<String, String> = emptyMap()
     ) : AlertTrigger()
 }
 
 @Serializable
-data class EventTimeRange(
-    val startHour: Int,
-    val endHour: Int,
-    val daysOfWeek: Set<Int> = setOf() // 1 = Sunday, 7 = Saturday
-)
+sealed class AlertAction {
+    @Serializable
+    @SerialName("notification")
+    data class NotificationAction(
+        val title: String,
+        val message: String,
+        val priority: Priority = Priority.DEFAULT,
+        val type: AlertActionType = AlertActionType.NOTIFICATION
+    ) : AlertAction()
 
-@Serializable
-data class AlertAction(
-    val type: AlertActionType,
-    val title: String = "",
-    val message: String = "",
-    val priority: NotificationPriority = NotificationPriority.DEFAULT,
-    val config: Map<String, String> = emptyMap()
-)
+    @Serializable
+    @SerialName("email")
+    data class EmailAction(
+        val recipient: String,
+        val subject: String,
+        val body: String,
+        val attachments: List<String> = emptyList(),
+        val type: AlertActionType = AlertActionType.EMAIL,
+        val config: Map<String, String> = mapOf()
+    ) : AlertAction()
 
-@Serializable
-enum class AlertType {
-    PRICE, CONTENT, WEATHER, RELEASE, EVENT, CUSTOM
+    @Serializable
+    @SerialName("webhook")
+    data class WebhookAction(
+        val url: String,
+        val method: String = "POST",
+        val headers: Map<String, String> = mapOf(),
+        val body: String? = null,
+        val type: AlertActionType = AlertActionType.WEBHOOK
+    ) : AlertAction()
+
+    @Serializable
+    @SerialName("sms")
+    data class SmsAction(
+        val phoneNumber: String,
+        val body: String,
+        val type: AlertActionType = AlertActionType.SMS
+    ) : AlertAction()
 }
 
 @Serializable
-enum class PriceOperator {
-    ABOVE, BELOW, INCREASES_BY, DECREASES_BY
+enum class Priority {
+    LOW,
+    DEFAULT,
+    HIGH,
+    URGENT
 }
 
 @Serializable
 enum class AlertActionType {
     NOTIFICATION,
     EMAIL,
-    SMS,
     WEBHOOK,
-    SCRIPT
-}
-
-@Serializable
-enum class NotificationPriority {
-    LOW,
-    DEFAULT,
-    HIGH
-}
-
-@Serializable
-data class WeatherConditionRule(
-    val metric: String,
-    val operator: String,
-    val value: Double
-)
-
-@Serializable
-enum class ContentSource {
-    TWITTER,
-    REDDIT,
-    RSS,
-    WEBSITE,
+    SMS,
     CUSTOM
-}
-
-@Serializable
-enum class MediaType {
-    MOVIE,
-    TV_SHOW,
-    MUSIC,
-    BOOK,
-    GAME,
-    PODCAST,
-    COMIC_BOOK,
-    EVENT
 }

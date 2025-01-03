@@ -1,11 +1,16 @@
 package com.example.alertapp.validation
 
-import com.example.alertapp.models.*
-import kotlinx.datetime.*
+import com.example.alertapp.models.Alert
+import com.example.alertapp.models.AlertTrigger
+import com.example.alertapp.models.AlertAction
+import com.example.alertapp.models.ValidationResult
+import com.example.alertapp.models.weather.WeatherCondition
+import com.example.alertapp.models.weather.WeatherLocation
+import com.example.alertapp.models.content.ContentFilter
+import com.example.alertapp.enums.Operator
+import com.example.alertapp.enums.Sentiment
+import com.example.alertapp.enums.ReleaseType
 
-/**
- * Validates alerts and their components.
- */
 class AlertValidator {
     fun validateAlert(alert: Alert): ValidationResult {
         val errors = mutableMapOf<String, String>()
@@ -15,49 +20,59 @@ class AlertValidator {
             errors["name"] = "Alert name cannot be empty"
         }
 
-        // Validate trigger
-        val triggerResult = when (alert.trigger) {
-            is AlertTrigger.PriceTrigger -> validatePriceTrigger(alert.trigger)
-            is AlertTrigger.ContentTrigger -> validateContentTrigger(alert.trigger)
-            is AlertTrigger.WeatherTrigger -> validateWeatherTrigger(alert.trigger)
-            is AlertTrigger.ReleaseTrigger -> validateReleaseTrigger(alert.trigger)
-            is AlertTrigger.EventTrigger -> validateEventTrigger(alert.trigger)
-            is AlertTrigger.CustomTrigger -> validateCustomTrigger(alert.trigger)
+        if (alert.description.isBlank()) {
+            warnings["description"] = "Consider adding a description for better clarity"
         }
 
-        errors.putAll(triggerResult.errors)
-        warnings.putAll(triggerResult.warnings)
+        when (val trigger = alert.trigger) {
+            is AlertTrigger.PriceTrigger -> validatePriceTrigger(trigger, errors, warnings)
+            is AlertTrigger.ContentTrigger -> validateContentTrigger(trigger, errors, warnings)
+            is AlertTrigger.WeatherTrigger -> validateWeatherTrigger(trigger, errors, warnings)
+            is AlertTrigger.ReleaseTrigger -> validateReleaseTrigger(trigger, errors, warnings)
+            is AlertTrigger.EventTrigger -> validateEventTrigger(trigger, errors, warnings)
+            is AlertTrigger.CustomTrigger -> validateCustomTrigger(trigger, errors, warnings)
+            else -> errors["trigger"] = "Unknown trigger type"
+        }
 
-        // Validate actions
-        if (alert.actions.isEmpty()) {
-            warnings["actions"] = "No actions specified for this alert"
-        } else {
-            alert.actions.forEachIndexed { index, action ->
-                when (action.type) {
-                    AlertActionType.NOTIFICATION -> {
-                        if (action.title.isBlank()) {
-                            errors["actions.$index.title"] = "Notification title cannot be empty"
-                        }
-                        if (action.message.isBlank()) {
-                            errors["actions.$index.message"] = "Notification message cannot be empty"
-                        }
+        alert.actions.forEachIndexed { index, action ->
+            when (action) {
+                is AlertAction.NotificationAction -> {
+                    if (action.title.isBlank()) {
+                        errors["actions.$index.title"] = "Notification title cannot be empty"
                     }
-                    AlertActionType.EMAIL -> {
-                        val recipient = action.config["recipient"] ?: ""
-                        val subject = action.config["subject"] ?: ""
-                        
-                        if (recipient.isBlank()) {
-                            errors["actions.$index.recipient"] = "Email recipient cannot be empty"
-                        }
-                        if (!isValidEmail(recipient)) {
-                            errors["actions.$index.recipient"] = "Invalid email address"
-                        }
-                        if (subject.isBlank()) {
-                            errors["actions.$index.subject"] = "Email subject cannot be empty"
-                        }
+                    if (action.message.isBlank()) {
+                        errors["actions.$index.message"] = "Notification message cannot be empty"
                     }
-                    else -> {}
                 }
+                is AlertAction.EmailAction -> {
+                    if (action.recipient.isBlank()) {
+                        errors["actions.$index.recipient"] = "Email recipient cannot be empty"
+                    } else if (!isValidEmail(action.recipient)) {
+                        errors["actions.$index.recipient"] = "Invalid email format"
+                    }
+                    if (action.subject.isBlank()) {
+                        errors["actions.$index.subject"] = "Email subject cannot be empty"
+                    }
+                    if (action.body.isBlank()) {
+                        errors["actions.$index.body"] = "Email body cannot be empty"
+                    }
+                }
+                is AlertAction.WebhookAction -> {
+                    if (action.url.isBlank()) {
+                        errors["actions.$index.url"] = "Webhook URL cannot be empty"
+                    } else if (!isValidUrl(action.url)) {
+                        errors["actions.$index.url"] = "Invalid URL format"
+                    }
+                }
+                is AlertAction.SmsAction -> {
+                    if (action.phoneNumber.isBlank()) {
+                        errors["actions.$index.phoneNumber"] = "Phone number cannot be empty"
+                    }
+                    if (action.body.isBlank()) {
+                        errors["actions.$index.body"] = "SMS body cannot be empty"
+                    }
+                }
+                else -> errors["actions.$index"] = "Unknown action type"
             }
         }
 
@@ -68,156 +83,94 @@ class AlertValidator {
         )
     }
 
-    private fun validatePriceTrigger(trigger: AlertTrigger.PriceTrigger): ValidationResult {
-        val errors = mutableMapOf<String, String>()
-        val warnings = mutableMapOf<String, String>()
-        
+    private fun validatePriceTrigger(
+        trigger: AlertTrigger.PriceTrigger,
+        errors: MutableMap<String, String>,
+        warnings: MutableMap<String, String>
+    ) {
         if (trigger.asset.isBlank()) {
-            errors["asset"] = "Asset symbol cannot be empty"
+            errors["trigger.asset"] = "Asset cannot be empty"
         }
         if (trigger.threshold <= 0) {
-            errors["threshold"] = "Price threshold must be greater than 0"
+            errors["trigger.threshold"] = "Threshold must be greater than 0"
         }
-        if (!isValidTimeframe(trigger.timeframe)) {
-            errors["timeframe"] = "Invalid timeframe format (e.g., 1h, 24h, 7d)"
-        }
-        
-        return ValidationResult(
-            isValid = errors.isEmpty(),
-            errors = errors,
-            warnings = warnings
-        )
     }
 
-    private fun validateContentTrigger(trigger: AlertTrigger.ContentTrigger): ValidationResult {
-        val errors = mutableMapOf<String, String>()
-        val warnings = mutableMapOf<String, String>()
-        
-        if (trigger.keywords.isEmpty()) {
-            errors["keywords"] = "At least one keyword is required"
+    private fun validateContentTrigger(
+        trigger: AlertTrigger.ContentTrigger,
+        errors: MutableMap<String, String>,
+        warnings: MutableMap<String, String>
+    ) {
+        if (trigger.query.isBlank()) {
+            errors["trigger.query"] = "Search query cannot be empty"
         }
-        if (trigger.keywords.any { it.isBlank() }) {
-            errors["keywords"] = "Keywords cannot be empty"
+        if (trigger.minRating != null && (trigger.minRating < 0 || trigger.minRating > 1)) {
+            errors["trigger.minRating"] = "Rating must be between 0 and 1"
         }
         if (trigger.sources.isEmpty()) {
-            errors["sources"] = "At least one content source must be selected"
+            warnings["trigger.sources"] = "Consider specifying content sources for better results"
         }
-        if (trigger.excludeKeywords.any { it.isBlank() }) {
-            errors["excludeKeywords"] = "Exclude keywords cannot be empty"
-        }
-        if (trigger.keywords.any { it.length < 3 }) {
-            warnings["keywords"] = "Short keywords may lead to many false matches"
-        }
-        
-        return ValidationResult(
-            isValid = errors.isEmpty(),
-            errors = errors,
-            warnings = warnings
-        )
     }
 
-    private fun validateWeatherTrigger(trigger: AlertTrigger.WeatherTrigger): ValidationResult {
-        val errors = mutableMapOf<String, String>()
-        val warnings = mutableMapOf<String, String>()
-        
-        if (trigger.location.isBlank()) {
-            errors["location"] = "Location cannot be empty"
+    private fun validateWeatherTrigger(
+        trigger: AlertTrigger.WeatherTrigger,
+        errors: MutableMap<String, String>,
+        warnings: MutableMap<String, String>
+    ) {
+        if (trigger.location == null) {
+            errors["trigger.location"] = "Weather location must be specified"
         }
         if (trigger.conditions.isEmpty()) {
-            errors["conditions"] = "At least one weather condition is required"
+            errors["trigger.conditions"] = "At least one weather condition must be specified"
         }
-        
-        trigger.conditions.forEachIndexed { index, condition ->
-            if (!isValidWeatherMetric(condition.metric)) {
-                errors["conditions.$index.metric"] = "Invalid weather metric"
-            }
-            if (!isValidWeatherOperator(condition.operator)) {
-                errors["conditions.$index.operator"] = "Invalid operator"
-            }
-        }
-        
-        return ValidationResult(
-            isValid = errors.isEmpty(),
-            errors = errors,
-            warnings = warnings
-        )
     }
 
-    private fun validateReleaseTrigger(trigger: AlertTrigger.ReleaseTrigger): ValidationResult {
-        val errors = mutableMapOf<String, String>()
-        val warnings = mutableMapOf<String, String>()
-        
-        if (trigger.creator.isBlank()) {
-            errors["creator"] = "Creator cannot be empty"
+    private fun validateReleaseTrigger(
+        trigger: AlertTrigger.ReleaseTrigger,
+        errors: MutableMap<String, String>,
+        warnings: MutableMap<String, String>
+    ) {
+        if (trigger.type.isBlank()) {
+            errors["trigger.type"] = "Release type cannot be empty"
         }
         if (trigger.conditions.isEmpty()) {
-            warnings["conditions"] = "No specific conditions set for release"
+            warnings["trigger.conditions"] = "Consider adding conditions to filter releases"
         }
-        
-        return ValidationResult(
-            isValid = errors.isEmpty(),
-            errors = errors,
-            warnings = warnings
-        )
     }
 
-    private fun validateEventTrigger(trigger: AlertTrigger.EventTrigger): ValidationResult {
-        val errors = mutableMapOf<String, String>()
-        val warnings = mutableMapOf<String, String>()
-        
-        if (trigger.categories.isEmpty() && trigger.locations.isEmpty() && trigger.keywords.isEmpty()) {
-            errors["criteria"] = "At least one search criteria (category, location, or keyword) is required"
+    private fun validateEventTrigger(
+        trigger: AlertTrigger.EventTrigger,
+        errors: MutableMap<String, String>,
+        warnings: MutableMap<String, String>
+    ) {
+        if (trigger.categories.isEmpty()) {
+            warnings["trigger.categories"] = "Consider specifying event categories"
         }
-        
-        trigger.timeRange?.let { range ->
-            if (range.startHour < 0 || range.startHour > 23) {
-                errors["timeRange.startHour"] = "Start hour must be between 0 and 23"
-            }
-            if (range.endHour < 0 || range.endHour > 23) {
-                errors["timeRange.endHour"] = "End hour must be between 0 and 23"
-            }
-            if (range.startHour >= range.endHour) {
-                errors["timeRange"] = "Start hour must be before end hour"
-            }
-            if (range.daysOfWeek.any { it < 1 || it > 7 }) {
-                errors["timeRange.daysOfWeek"] = "Days must be between 1 (Sunday) and 7 (Saturday)"
-            }
+        if (trigger.locations.isEmpty() && trigger.keywords.isEmpty()) {
+            warnings["trigger.criteria"] = "Consider adding locations or keywords to filter events"
         }
-        
-        return ValidationResult(
-            isValid = errors.isEmpty(),
-            errors = errors,
-            warnings = warnings
-        )
     }
 
-    private fun validateCustomTrigger(trigger: AlertTrigger.CustomTrigger): ValidationResult {
-        val errors = mutableMapOf<String, String>()
-        val warnings = mutableMapOf<String, String>()
-        
+    private fun validateCustomTrigger(
+        trigger: AlertTrigger.CustomTrigger,
+        errors: MutableMap<String, String>,
+        warnings: MutableMap<String, String>
+    ) {
         if (trigger.description.isBlank()) {
-            warnings["description"] = "Description is recommended for custom triggers"
+            errors["trigger.description"] = "Custom trigger description cannot be empty"
         }
         if (trigger.parameters.isEmpty()) {
-            warnings["parameters"] = "No parameters specified for custom trigger"
+            warnings["trigger.parameters"] = "Consider adding parameters to customize trigger behavior"
         }
-        
-        return ValidationResult(
-            isValid = errors.isEmpty(),
-            errors = errors,
-            warnings = warnings
-        )
     }
 
-    private fun isValidEmail(email: String): Boolean =
-        email.matches(Regex("^[A-Za-z0-9+_.-]+@(.+)$"))
+    private fun isValidEmail(email: String): Boolean {
+        val emailRegex = "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"
+        return email.matches(emailRegex.toRegex())
+    }
 
-    private fun isValidTimeframe(timeframe: String): Boolean =
-        timeframe.matches(Regex("^\\d+[hd]$"))
-
-    private fun isValidWeatherMetric(metric: String): Boolean =
-        metric.matches(Regex("^(temperature|humidity|pressure|wind_speed|precipitation)$"))
-
-    private fun isValidWeatherOperator(operator: String): Boolean =
-        operator.matches(Regex("^(eq|ne|gt|lt|gte|lte)$"))
+    private fun isValidUrl(url: String): Boolean {
+        val urlRegex = "^(http|https)://[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}(/.*)?$"
+        return url.matches(urlRegex.toRegex())
+    }
 }

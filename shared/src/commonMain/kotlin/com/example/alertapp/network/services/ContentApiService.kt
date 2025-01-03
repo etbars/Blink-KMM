@@ -1,10 +1,12 @@
 package com.example.alertapp.network.services
 
+import com.example.alertapp.api.ApiResponse
+import com.example.alertapp.api.errors.ApiError
 import com.example.alertapp.models.ContentSource
-import com.example.alertapp.network.ApiResponse
 import com.example.alertapp.network.NetworkClient
 import io.ktor.client.call.*
 import io.ktor.client.request.*
+import io.ktor.http.HttpStatusCode
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.Serializable
@@ -16,30 +18,50 @@ class ContentApiService(
 ) {
     suspend fun getContent(
         sources: List<ContentSource>,
-        keywords: List<String>? = null
+        keywords: List<String>? = null,
+        query: String? = null,
+        fromDate: Instant? = null,
+        toDate: Instant? = null
     ): ApiResponse<List<ContentItem>> {
         return try {
             val response = networkClient.client.get("$baseUrl/everything") {
                 parameter("apiKey", apiKey)
-                parameter("q", keywords?.joinToString(" OR "))
+                if (!query.isNullOrBlank()) {
+                    parameter("q", query)
+                } else if (!keywords.isNullOrEmpty()) {
+                    parameter("q", keywords.joinToString(" OR "))
+                }
                 parameter("sources", sources.map { it.toApiSource() }.joinToString(","))
                 parameter("language", "en")
                 parameter("sortBy", "publishedAt")
+                fromDate?.let { parameter("from", it.toString()) }
+                toDate?.let { parameter("to", it.toString()) }
             }
 
-            val contentResponse = response.body<NewsResponse>()
-            ApiResponse.Success(contentResponse.articles.map { it.toContentItem() })
+            when (response.status) {
+                HttpStatusCode.OK -> {
+                    val contentResponse = response.body<NewsResponse>()
+                    if (contentResponse.status == "ok") {
+                        ApiResponse.Success(contentResponse.articles.map { it.toContentItem() })
+                    } else {
+                        ApiResponse.Error(ApiError.ServerError("API returned error status: ${contentResponse.status}"))
+                    }
+                }
+                HttpStatusCode.Unauthorized -> ApiResponse.Error(ApiError.AuthenticationError("Invalid API key"))
+                HttpStatusCode.TooManyRequests -> ApiResponse.Error(ApiError.RateLimitError("Rate limit exceeded"))
+                else -> ApiResponse.Error(ApiError.ServerError("Server returned ${response.status}"))
+            }
         } catch (e: Exception) {
-            ApiResponse.Error(message = "Failed to fetch content: ${e.message}")
+            ApiResponse.Error(ApiError.NetworkError("Failed to fetch content: ${e.message}"))
         }
     }
 
     private fun ContentSource.toApiSource(): String = when (this) {
-        ContentSource.NEWS_API -> "reuters,bbc-news,cnn"
-        ContentSource.REDDIT -> "reddit-r-all"
-        ContentSource.TWITTER -> "twitter"
-        ContentSource.RSS -> "rss"
-        ContentSource.CUSTOM -> "custom"
+        ContentSource.NEWS -> "reuters,bbc-news,cnn"
+        ContentSource.BLOG -> "medium,dev-to,hashnode"
+        ContentSource.SOCIAL_MEDIA -> "twitter,facebook,linkedin"
+        ContentSource.RSS -> "rss-feeds"
+        ContentSource.WEBSITE -> "web-content"
     }
 
     @Serializable
@@ -51,51 +73,46 @@ class ContentApiService(
 
     @Serializable
     private data class Article(
+        val source: ArticleSource,
+        val author: String? = null,
         val title: String,
-        val description: String?,
+        val description: String? = null,
         val url: String,
-        val urlToImage: String?,
+        val urlToImage: String? = null,
         val publishedAt: String,
-        val content: String?,
-        val author: String?,
-        val source: Source
+        val content: String? = null
     ) {
         fun toContentItem() = ContentItem(
+            id = url,
             title = title,
             description = description ?: "",
+            source = source.name ?: "Unknown",
             url = url,
             imageUrl = urlToImage,
-            publishedAt = parsePublishedAt(publishedAt),
-            content = content ?: "",
-            author = author ?: "",
-            source = source.name ?: ""
-        )
-
-        private fun parsePublishedAt(dateStr: String): Instant {
-            return try {
-                // Parse ISO 8601 date string
-                Instant.parse(dateStr)
+            publishedAt = try {
+                Instant.parse(publishedAt)
             } catch (e: Exception) {
                 Clock.System.now()
-            }
-        }
+            },
+            author = author
+        )
     }
 
     @Serializable
-    private data class Source(
-        val id: String?,
-        val name: String?
+    private data class ArticleSource(
+        val id: String? = null,
+        val name: String? = null
     )
 }
 
 @Serializable
 data class ContentItem(
+    val id: String,
     val title: String,
     val description: String,
+    val source: String,
     val url: String,
-    val imageUrl: String?,
+    val imageUrl: String? = null,
     val publishedAt: Instant,
-    val content: String,
-    val author: String,
-    val source: String
+    val author: String? = null
 )

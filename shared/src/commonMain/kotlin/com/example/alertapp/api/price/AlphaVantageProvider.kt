@@ -1,145 +1,78 @@
 package com.example.alertapp.api.price
 
-import com.example.alertapp.api.ApiError
+import com.example.alertapp.api.errors.ApiError
 import com.example.alertapp.api.ApiResponse
 import com.example.alertapp.api.BaseApiProvider
 import com.example.alertapp.models.price.PriceData
-import com.example.alertapp.models.price.OHLCV
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.datetime.Instant
+import com.example.alertapp.network.NetworkClient
+import io.ktor.client.call.*
+import io.ktor.http.*
 import kotlinx.serialization.json.*
 import co.touchlab.kermit.Logger
+import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 
 class AlphaVantageProvider(
-    override val config: PriceConfig
-) : BaseApiProvider<PriceConfig>(
-) {
-    private val logger = Logger.withTag("AlphaVantageProvider")
+    networkClient: NetworkClient,
+    override val config: Map<String, String>,
+    override val logger: Logger = Logger.withTag("AlphaVantageProvider")
+) : BaseApiProvider(networkClient) {
+    override val baseUrl = config["ALPHA_VANTAGE_URL"] ?: throw IllegalStateException("ALPHA_VANTAGE_URL not configured")
+    private val apiKey = config["ALPHA_VANTAGE_KEY"] ?: throw IllegalStateException("ALPHA_VANTAGE_KEY not configured")
 
-    suspend fun getQuote(symbol: String): Flow<ApiResponse<PriceData.Quote>> = flow {
-        emit(ApiResponse.Loading)
-        try {
-            val response = get<JsonObject>(
-                endpoint = "query",
-                params = mapOf(
-                    "function" to "GLOBAL_QUOTE",
-                    "symbol" to symbol,
-                    "apikey" to config.apiKey
-                )
+    suspend fun getStockPrice(symbol: String): ApiResponse<PriceData.Quote> {
+        return get<JsonObject>(
+            endpoint = "query",
+            params = mapOf(
+                "function" to "GLOBAL_QUOTE",
+                "symbol" to symbol,
+                "apikey" to apiKey
             )
+        ).let { response ->
+            when (response) {
+                is ApiResponse.Success -> {
+                    val json = response.data
+                    if (json.containsKey("Note") && json["Note"]?.jsonPrimitive?.content?.contains("API call frequency") == true) {
+                        logger.w("Rate limit exceeded for Alpha Vantage API")
+                        ApiResponse.Error(ApiError.RateLimitExceeded("Alpha Vantage API rate limit exceeded"))
+                    } else {
+                        val quote = json["Global Quote"]?.jsonObject
+                            ?: return ApiResponse.Error(ApiError.ParseError("Invalid response format"))
 
-            response.collect { apiResponse ->
-                when (apiResponse) {
-                    is ApiResponse.Success -> {
-                        val quote = parseQuoteResponse(apiResponse.data)
-                        emit(ApiResponse.success(quote))
+                        val currentPrice = quote["05. price"]?.jsonPrimitive?.content?.toDoubleOrNull()
+                            ?: return ApiResponse.Error(ApiError.ParseError("Invalid price format"))
+
+                        val priceChange = quote["09. change"]?.jsonPrimitive?.content?.toDoubleOrNull()
+                            ?: return ApiResponse.Error(ApiError.ParseError("Invalid price change format"))
+
+                        val percentChange = quote["10. change percent"]?.jsonPrimitive?.content?.removeSuffix("%")?.toDoubleOrNull()
+                            ?: return ApiResponse.Error(ApiError.ParseError("Invalid percent change format"))
+
+                        val volume = quote["06. volume"]?.jsonPrimitive?.content?.toLongOrNull()
+                            ?: return ApiResponse.Error(ApiError.ParseError("Invalid volume format"))
+
+                        val timestamp = quote["07. latest trading day"]?.jsonPrimitive?.content?.let { dateStr ->
+                            try {
+                                Instant.parse(dateStr + "T00:00:00Z")
+                            } catch (e: Exception) {
+                                logger.e("Failed to parse date", e)
+                                null
+                            }
+                        } ?: Clock.System.now()
+
+                        ApiResponse.Success(PriceData.Quote(
+                            symbol = symbol,
+                            currentPrice = currentPrice,
+                            priceChange = priceChange,
+                            percentChange = percentChange,
+                            volume = volume,
+                            timestamp = timestamp
+                        ))
                     }
-                    is ApiResponse.Loading -> emit(ApiResponse.Loading)
-                    is ApiResponse.Error -> emit(apiResponse)
                 }
-            }
-        } catch (e: Exception) {
-            logger.e(e) { "Error getting quote for $symbol" }
-            emit(ApiResponse.error(ApiError.UnknownError(e.message ?: "Unknown error")))
-        }
-    }
-
-    suspend fun getHistoricalPrices(
-        symbol: String,
-        interval: String = "5min"
-    ): Flow<ApiResponse<PriceData.Historical>> = flow {
-        emit(ApiResponse.Loading)
-        try {
-            val response = get<JsonObject>(
-                endpoint = "query",
-                params = mapOf(
-                    "function" to "TIME_SERIES_INTRADAY",
-                    "symbol" to symbol,
-                    "interval" to interval,
-                    "apikey" to config.apiKey
-                )
-            )
-
-            response.collect { apiResponse ->
-                when (apiResponse) {
-                    is ApiResponse.Success -> {
-                        val historical = parseHistoricalResponse(apiResponse.data, interval)
-                        emit(ApiResponse.success(historical))
-                    }
-                    is ApiResponse.Loading -> emit(ApiResponse.Loading)
-                    is ApiResponse.Error -> emit(apiResponse)
-                }
-            }
-        } catch (e: Exception) {
-            logger.e(e) { "Error getting historical prices for $symbol" }
-            emit(ApiResponse.error(ApiError.UnknownError(e.message ?: "Unknown error")))
-        }
-    }
-
-    private fun parseQuoteResponse(jsonObject: JsonObject): PriceData.Quote {
-        val quoteData = jsonObject["Global Quote"]?.jsonObject
-            ?: throw ApiError.ParseError("Global Quote not found in response")
-
-        return PriceData.Quote(
-            symbol = quoteData["01. symbol"]?.jsonPrimitive?.content
-                ?: throw ApiError.ParseError("Symbol not found in response"),
-            currentPrice = quoteData["05. price"]?.jsonPrimitive?.content?.toDoubleOrNull()
-                ?: throw ApiError.ParseError("Price not found in response"),
-            priceChange = quoteData["09. change"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 0.0,
-            percentChange = quoteData["10. change percent"]?.jsonPrimitive?.content?.removeSuffix("%")?.toDoubleOrNull() ?: 0.0,
-            volume = quoteData["06. volume"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L,
-            timestamp = Instant.parse(quoteData["07. latest trading day"]?.jsonPrimitive?.content?.plus("T00:00:00Z")
-                ?: throw ApiError.ParseError("Timestamp not found in response"))
-        )
-    }
-
-    private fun parseHistoricalResponse(jsonObject: JsonObject, interval: String): PriceData.Historical {
-        val metadata = jsonObject["Meta Data"]?.jsonObject
-            ?: throw ApiError.ParseError("Meta Data not found in response")
-        
-        val symbol = metadata["2. Symbol"]?.jsonPrimitive?.content
-            ?: throw ApiError.ParseError("Symbol not found in metadata")
-
-        val timeSeriesKey = when (interval) {
-            "1min" -> "Time Series (1min)"
-            "5min" -> "Time Series (5min)"
-            "15min" -> "Time Series (15min)"
-            "30min" -> "Time Series (30min)"
-            "60min" -> "Time Series (60min)"
-            else -> throw ApiError.ValidationError("Invalid interval: $interval")
-        }
-
-        val timeSeries = jsonObject[timeSeriesKey]?.jsonObject
-            ?: throw ApiError.ParseError("Time series data not found")
-
-        val prices = timeSeries.entries.mapNotNull { (timestamp, data) ->
-            try {
-                val dataObj = data.jsonObject
-                OHLCV(
-                    timestamp = Instant.parse(timestamp.replace(" ", "T") + "Z"),
-                    open = dataObj["1. open"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: return@mapNotNull null,
-                    high = dataObj["2. high"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: return@mapNotNull null,
-                    low = dataObj["3. low"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: return@mapNotNull null,
-                    close = dataObj["4. close"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: return@mapNotNull null,
-                    volume = dataObj["5. volume"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
-                )
-            } catch (e: Exception) {
-                logger.w(e) { "Failed to parse price point for timestamp $timestamp" }
-                null
+                is ApiResponse.Error -> response
+                is ApiResponse.Loading -> response
             }
         }
-
-        if (prices.isEmpty()) {
-            throw ApiError.ValidationError("No valid price data found")
-        }
-
-        return PriceData.Historical(
-            symbol = symbol,
-            interval = interval,
-            prices = prices.sortedBy { it.timestamp },
-            startTime = prices.first().timestamp,
-            endTime = prices.last().timestamp
-        )
     }
 }

@@ -47,15 +47,7 @@ expect class ConfigManager {
     fun updateWorkConfig(config: WorkConfig): ValidationResult
 
     companion object {
-        val json = Json {
-            prettyPrint = true
-            ignoreUnknownKeys = true
-            isLenient = true
-        }
-
-        val migrationManager = ConfigMigrationManager().apply {
-            registerMigration(InitialMigration())
-            // Register future migrations here
-        }
+        val json: Json
+        val migrationManager: ConfigMigrationManager
     }
 }

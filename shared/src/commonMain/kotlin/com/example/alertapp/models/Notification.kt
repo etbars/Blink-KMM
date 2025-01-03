@@ -1,6 +1,7 @@
 package com.example.alertapp.models
 
 import kotlinx.serialization.Serializable
+import com.example.alertapp.models.NotificationPriority
 
 @Serializable
 data class Notification(
@@ -10,8 +11,3 @@ data class Notification(
     val timestamp: Long = 0,
     val priority: NotificationPriority = NotificationPriority.DEFAULT
 )
-
-@Serializable
-enum class NotificationPriority {
-    LOW, DEFAULT, HIGH
-}

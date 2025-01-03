@@ -1,6 +1,7 @@
 package com.example.alertapp.services.openai
 
-import com.example.alertapp.models.AlertContext
+import com.example.alertapp.nlp.AlertContext
+import com.example.alertapp.nlp.AlertPattern
 import kotlinx.serialization.json.*
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
@@ -106,10 +107,10 @@ class OpenAIService(
         previousContext: AlertContext? = null
     ): AlertRequestResponse = withContext(Dispatchers.Default) {
         try {
-            val contextInfo = previousContext?.let {
+            val contextInfo = previousContext?.let { context ->
                 "\nPrevious context:\n" +
-                "- Patterns: ${it.patterns.joinToString(", ") { pattern -> pattern.value }}\n" +
-                "- Metadata: ${Json.encodeToString(JsonObject.serializer(), JsonObject(it.metadata.mapValues { JsonPrimitive(it.value.toString()) }))}"
+                "- Patterns: ${context.patterns.joinToString(", ") { pattern -> pattern.value }}\n" +
+                "- Metadata: ${Json.encodeToString(JsonObject.serializer(), JsonObject(context.metadata.mapValues { JsonPrimitive(it.value) }))}"
             } ?: ""
 
             logger.d { "Sending request to OpenAI with input: $input" }
@@ -168,70 +169,59 @@ class OpenAIService(
                 )
             ))
 
-            val response = completion.choices.firstOrNull()?.message?.content 
+            val response = completion.choices.firstOrNull()?.message?.content
                 ?: throw IllegalStateException("Empty response from OpenAI")
-            
-            logger.d { "Received analysis from OpenAI: $response" }
-            
-            parseAnalysis(response)
-        } catch (e: Exception) {
-            logger.e(e) { "Error analyzing content: ${e.message}" }
-            ContentAnalysis(
-                relevance = 0.0,
-                sentiment = "NEUTRAL",
-                keyTopics = emptyList(),
-                entities = emptyList(),
-                suggestedAlerts = emptyList(),
-                recommendedSources = emptySet(),
-                patterns = emptyList()
-            )
-        }
-    }
 
-    private fun parseAnalysis(response: String): ContentAnalysis {
-        val lines = response.lines()
-        var relevance = 0.0
-        var sentiment = "NEUTRAL"
-        var keyTopics = emptyList<String>()
-        var entities = emptyList<String>()
-        var suggestedAlerts = emptyList<String>()
-        var recommendedSources = emptySet<String>()
-        var patterns = emptyList<String>()
+            logger.d { "Received response from OpenAI: $response" }
 
-        lines.forEach { line ->
-            when {
-                line.startsWith("Relevance score:") -> {
-                    relevance = line.substringAfter(":").trim().toDoubleOrNull() ?: 0.0
-                }
-                line.startsWith("Sentiment:") -> {
-                    sentiment = line.substringAfter(":").trim()
-                }
-                line.startsWith("Key topics:") -> {
-                    keyTopics = line.substringAfter(":").split(",").map { it.trim() }
-                }
-                line.startsWith("Named entities:") -> {
-                    entities = line.substringAfter(":").split(",").map { it.trim() }
-                }
-                line.startsWith("Suggested alerts:") -> {
-                    suggestedAlerts = line.substringAfter(":").split(",").map { it.trim() }
-                }
-                line.startsWith("Recommended sources:") -> {
-                    recommendedSources = line.substringAfter(":").split(",").map { it.trim() }.toSet()
-                }
-                line.startsWith("Identified patterns:") -> {
-                    patterns = line.substringAfter(":").split(",").map { it.trim() }
+            // Parse response and extract structured data
+            val lines = response.lines()
+            var relevance = 0.0
+            var sentiment = ""
+            var keyTopics = emptyList<String>()
+            var entities = emptyList<String>()
+            var suggestedAlerts = emptyList<String>()
+            var recommendedSources = emptySet<String>()
+            var patterns = emptyList<String>()
+
+            lines.forEach { line ->
+                when {
+                    line.startsWith("Relevance score:") -> {
+                        relevance = line.substringAfter(":").trim().toDoubleOrNull() ?: 0.0
+                    }
+                    line.startsWith("Sentiment:") -> {
+                        sentiment = line.substringAfter(":").trim()
+                    }
+                    line.startsWith("Key topics:") -> {
+                        keyTopics = line.substringAfter(":").split(",").map { it.trim() }
+                    }
+                    line.startsWith("Named entities:") -> {
+                        entities = line.substringAfter(":").split(",").map { it.trim() }
+                    }
+                    line.startsWith("Suggested alerts:") -> {
+                        suggestedAlerts = line.substringAfter(":").split(",").map { it.trim() }
+                    }
+                    line.startsWith("Recommended sources:") -> {
+                        recommendedSources = line.substringAfter(":").split(",").map { it.trim() }.toSet()
+                    }
+                    line.startsWith("Identified patterns:") -> {
+                        patterns = line.substringAfter(":").split(",").map { it.trim() }
+                    }
                 }
             }
-        }
 
-        return ContentAnalysis(
-            relevance = relevance,
-            sentiment = sentiment,
-            keyTopics = keyTopics,
-            entities = entities,
-            suggestedAlerts = suggestedAlerts,
-            recommendedSources = recommendedSources,
-            patterns = patterns
-        )
+            ContentAnalysis(
+                relevance = relevance,
+                sentiment = sentiment,
+                keyTopics = keyTopics,
+                entities = entities,
+                suggestedAlerts = suggestedAlerts,
+                recommendedSources = recommendedSources,
+                patterns = patterns
+            )
+        } catch (e: Exception) {
+            logger.e(e) { "Error analyzing content: ${e.message}" }
+            throw e
+        }
     }
 }

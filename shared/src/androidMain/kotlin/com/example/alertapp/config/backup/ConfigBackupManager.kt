@@ -4,11 +4,17 @@ import android.content.Context
 import com.example.alertapp.config.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.encodeToJsonElement
 import okio.FileSystem
 import okio.Path.Companion.toPath
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.example.alertapp.config.migration.ConfigVersion
 
 /**
  * Android implementation of ConfigBackupManager.
@@ -16,14 +22,11 @@ import javax.inject.Singleton
 @Singleton
 actual class ConfigBackupManager @Inject constructor(
     private val context: Context,
-    private val configManager: ConfigManager
+    private val configManager: ConfigManager,
+    private val json: Json,
+    private val fileSystem: FileSystem
 ) {
     private val backupDir = "${context.filesDir}/config_backups"
-    private val fileSystem = FileSystem.SYSTEM
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-    }
 
     init {
         // Ensure backup directory exists
@@ -55,30 +58,18 @@ actual class ConfigBackupManager @Inject constructor(
     actual suspend fun restoreBackup(backup: ConfigBackup): Boolean =
         withContext(Dispatchers.IO) {
             try {
-                backup.appConfig?.let { config ->
-                    val appConfig = json.decodeFromJsonElement(
-                        AlertAppConfig.serializer(), 
-                        config
-                    )
+                if (backup.appConfig != null) {
+                    val appConfig = json.decodeFromJsonElement(AlertAppConfig.serializer(), backup.appConfig)
                     configManager.updateAppConfig(appConfig)
                 }
-
-                backup.platformConfig?.let { config ->
-                    val platformConfig = json.decodeFromJsonElement(
-                        PlatformConfig.serializer(), 
-                        config
-                    )
+                if (backup.platformConfig != null) {
+                    val platformConfig = json.decodeFromJsonElement(PlatformConfig.serializer(), backup.platformConfig)
                     configManager.updatePlatformConfig(platformConfig)
                 }
-
-                backup.workConfig?.let { config ->
-                    val workConfig = json.decodeFromJsonElement(
-                        WorkConfig.serializer(), 
-                        config
-                    )
+                if (backup.workConfig != null) {
+                    val workConfig = json.decodeFromJsonElement(WorkConfig.serializer(), backup.workConfig)
                     configManager.updateWorkConfig(workConfig)
                 }
-
                 true
             } catch (e: Exception) {
                 false
@@ -88,45 +79,67 @@ actual class ConfigBackupManager @Inject constructor(
     actual suspend fun listBackups(): List<ConfigBackup> =
         withContext(Dispatchers.IO) {
             fileSystem.list(backupDir.toPath())
-                .filter { it.name.endsWith(ConfigBackup.BACKUP_FILE_EXTENSION) }
+                .filter { it.name.endsWith(".json") }
                 .mapNotNull { path ->
-                    try {
+                    runCatching {
                         val content = fileSystem.read(path) {
                             readUtf8()
                         }
                         json.decodeFromString(ConfigBackup.serializer(), content)
-                    } catch (e: Exception) {
-                        null
-                    }
+                    }.getOrNull()
                 }
                 .sortedByDescending { it.timestamp }
         }
 
     actual suspend fun deleteBackup(backup: ConfigBackup): Boolean =
         withContext(Dispatchers.IO) {
-            try {
-                val filename = generateBackupFilename(backup.timestamp)
-                val path = "$backupDir/$filename".toPath()
-                fileSystem.delete(path)
-                true
-            } catch (e: Exception) {
-                false
-            }
+            val filename = generateBackupFilename(backup.timestamp)
+            val path = "$backupDir/$filename".toPath()
+            runCatching { fileSystem.delete(path) }.isSuccess
         }
 
     actual suspend fun deleteAllBackups(): Int =
         withContext(Dispatchers.IO) {
             var count = 0
             fileSystem.list(backupDir.toPath())
-                .filter { it.name.endsWith(ConfigBackup.BACKUP_FILE_EXTENSION) }
+                .filter { it.name.endsWith(".json") }
                 .forEach { path ->
-                    try {
-                        fileSystem.delete(path)
+                    if (runCatching { fileSystem.delete(path) }.isSuccess) {
                         count++
-                    } catch (e: Exception) {
-                        // Continue with other deletions
                     }
                 }
             count
         }
+
+    private fun createBackupFromConfig(
+        appConfig: AlertAppConfig?,
+        platformConfig: PlatformConfig?,
+        workConfig: WorkConfig?,
+        metadata: Map<String, String> = emptyMap()
+    ): ConfigBackup = ConfigBackup(
+        timestamp = Clock.System.now(),
+        version = ConfigVersion.CURRENT,
+        appConfig = appConfig?.let { json.encodeToJsonElement(it) as JsonObject },
+        platformConfig = platformConfig?.let { json.encodeToJsonElement(it) as JsonObject },
+        workConfig = workConfig?.let { json.encodeToJsonElement(it) as JsonObject },
+        metadata = metadata
+    )
+
+    private fun generateBackupFilename(timestamp: Instant): String =
+        "backup_${timestamp.toString().replace(":", "-")}.json"
+
+    private fun cleanupOldBackups(
+        backups: List<ConfigBackup>,
+        fileSystem: FileSystem,
+        backupDir: String
+    ) {
+        // Keep only the most recent backups
+        if (backups.size > ConfigBackup.MAX_BACKUPS) {
+            backups.drop(ConfigBackup.MAX_BACKUPS).forEach { backup ->
+                val filename = generateBackupFilename(backup.timestamp)
+                val path = "$backupDir/$filename".toPath()
+                runCatching { fileSystem.delete(path) }
+            }
+        }
+    }
 }

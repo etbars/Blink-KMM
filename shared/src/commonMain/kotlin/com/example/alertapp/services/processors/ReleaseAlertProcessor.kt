@@ -1,117 +1,122 @@
 package com.example.alertapp.services.processors
 
-import com.example.alertapp.models.*
-import com.example.alertapp.services.base.*
-import kotlinx.serialization.Serializable
+import com.example.alertapp.api.ApiResponse
+import com.example.alertapp.enums.ReleaseType
+import com.example.alertapp.models.Alert
+import com.example.alertapp.models.AlertTrigger
+import com.example.alertapp.models.ProcessingResult
+import com.example.alertapp.models.Release
+import com.example.alertapp.api.release.ReleaseProvider
+import co.touchlab.kermit.Logger
 
-abstract class ReleaseAlertProcessor : BaseAlertProcessor() {
-
-    override val supportedType: AlertType = AlertType.RELEASE
-
-    override suspend fun processAlert(alert: Alert): ProcessingResult {
-        if (alert.trigger !is AlertTrigger.ReleaseTrigger) {
-            return error("Invalid trigger type for release alert")
+class ReleaseAlertProcessor(
+    private val releaseProvider: ReleaseProvider,
+    private val logger: Logger = Logger.withTag("ReleaseAlertProcessor")
+) {
+    private suspend fun checkNewReleases(
+        platform: String,
+        category: String? = null,
+        minRating: Double? = null
+    ): ReleaseResult {
+        return when (val response = releaseProvider.getReleases(
+            platform = platform,
+            category = category,
+            minRating = minRating
+        )) {
+            is ApiResponse.Success -> {
+                val releases = response.data
+                ReleaseResult.Success(releases)
+            }
+            is ApiResponse.Error -> {
+                ReleaseResult.Error(response.error.message)
+            }
+            is ApiResponse.Loading -> {
+                ReleaseResult.Loading
+            }
         }
+    }
 
-        val trigger = alert.trigger as AlertTrigger.ReleaseTrigger
-        val validationResult = validateAlertSpecific(trigger)
-        if (!validationResult.first) {
-            return notTriggered(validationResult.second)
-        }
+    suspend fun processAlert(alert: Alert): ProcessingResult {
+        val trigger = alert.trigger as? AlertTrigger.ReleaseTrigger
+            ?: return ProcessingResult.Error(
+                message = "Invalid trigger type",
+                code = "INVALID_TRIGGER"
+            )
 
         return try {
-            val releaseResult = checkForNewReleases(trigger)
-            when (releaseResult) {
+            when (val result = checkNewReleases(
+                platform = trigger.type,
+                category = trigger.creator,
+                minRating = trigger.minRating
+            )) {
                 is ReleaseResult.Success -> {
-                    if (releaseResult.releases.isNotEmpty()) {
-                        triggered(
-                            message = buildReleaseMessage(trigger.creator, releaseResult.releases),
-                            data = mapOf(
-                                "creator" to trigger.creator,
-                                "mediaType" to trigger.mediaType.name,
-                                "releases" to releaseResult.releases.joinToString(",") { it.title }
-                            ),
+                    val releases = result.releases.filter { release ->
+                        trigger.conditions.all { condition ->
+                            when (condition) {
+                                "hasRating" -> release.rating != null
+                                "hasDescription" -> !release.description.isNullOrBlank()
+                                "hasUrl" -> !release.url.isNullOrBlank()
+                                else -> true
+                            }
+                        }
+                    }
+
+                    if (releases.isNotEmpty()) {
+                        ProcessingResult.Triggered(
+                            message = "New releases found: ${releases.size}",
                             metadata = mapOf(
-                                "releaseCount" to releaseResult.releases.size.toString(),
-                                "latestRelease" to releaseResult.releases.first().releaseDate
+                                "platform" to trigger.type,
+                                "category" to (trigger.creator ?: "all"),
+                                "count" to releases.size.toString(),
+                                "latest" to releases.first().title
                             )
                         )
                     } else {
-                        notTriggered("No new releases found")
+                        ProcessingResult.NotTriggered(
+                            message = "No new releases found matching criteria"
+                        )
                     }
                 }
                 is ReleaseResult.Error -> {
-                    error(releaseResult.message)
+                    ProcessingResult.Error(
+                        message = result.message,
+                        code = "RELEASE_ERROR"
+                    )
+                }
+                ReleaseResult.Loading -> {
+                    ProcessingResult.NotTriggered(
+                        message = "Processing release data"
+                    )
                 }
             }
         } catch (e: Exception) {
-            logError("Error processing release alert", e)
-            error("Failed to process release: ${e.message}")
+            logger.e("Failed to process release alert", e)
+            ProcessingResult.Error(
+                message = "Failed to process release alert: ${e.message}",
+                code = "PROCESSING_ERROR"
+            )
         }
     }
 
-    override fun getConfigurationSchema(): Map<String, ConfigurationField> = mapOf(
-        "creator" to ConfigurationField(
-            type = ConfigurationFieldType.STRING,
-            required = true,
-            description = "Creator or artist to monitor for releases"
-        ),
-        "mediaType" to ConfigurationField(
-            type = ConfigurationFieldType.ENUM,
-            required = true,
-            description = "Type of media to monitor",
-            options = MediaType.values().map { it.name }
-        ),
-        "minRating" to ConfigurationField(
-            type = ConfigurationFieldType.NUMBER,
-            required = false,
-            description = "Minimum rating threshold for releases",
-            defaultValue = "0"
-        )
-    )
-
-    protected fun validateAlertSpecific(trigger: AlertTrigger.ReleaseTrigger): Pair<Boolean, String> {
-        if (trigger.creator.isBlank()) {
-            logWarning("Creator is blank")
-            return false to "Creator is required"
-        }
-
-        if (trigger.mediaType == MediaType.UNKNOWN) {
-            logWarning("Invalid media type")
-            return false to "Invalid media type"
-        }
-
-        if (trigger.minRating < 0 || trigger.minRating > 10) {
-            logWarning("Invalid rating range")
-            return false to "Rating must be between 0 and 10"
-        }
-
-        return true to ""
+    private fun logWarning(message: String) {
+        logger.w(message)
     }
 
-    protected abstract suspend fun checkForNewReleases(trigger: AlertTrigger.ReleaseTrigger): ReleaseResult
-
-    protected fun buildReleaseMessage(creator: String, releases: List<Release>): String {
-        return if (releases.size == 1) {
-            val release = releases.first()
-            "New release from $creator: ${release.title} (${release.releaseDate})"
+    private fun logError(message: String, error: Throwable? = null) {
+        if (error != null) {
+            logger.e(message, error)
         } else {
-            "New releases from $creator: ${releases.size} new items"
+            logger.e(message)
         }
+    }
+
+    private fun logInfo(message: String) {
+        logger.i(message)
     }
 }
 
 sealed class ReleaseResult {
     data class Success(val releases: List<Release>) : ReleaseResult()
     data class Error(val message: String) : ReleaseResult()
+    object Loading : ReleaseResult()
 }
-
-@Serializable
-data class Release(
-    val title: String,
-    val releaseDate: String,
-    val rating: Double,
-    val url: String,
-    val description: String? = null,
-    val imageUrl: String? = null
-)

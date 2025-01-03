@@ -1,143 +1,93 @@
 package com.example.alertapp.services.processors
 
-import com.example.alertapp.models.*
-import com.example.alertapp.services.base.*
-import kotlinx.serialization.Serializable
-import org.koin.core.component.KoinComponent
-import org.koin.core.component.inject
+import com.example.alertapp.models.Alert
+import com.example.alertapp.models.ProcessingResult
+import com.example.alertapp.models.AlertTrigger
+import com.example.alertapp.enums.Operator
+import com.example.alertapp.models.weather.WeatherCondition
+import com.example.alertapp.models.weather.WeatherConditionType
+import com.example.alertapp.models.weather.WeatherLocation
 
 abstract class WeatherAlertProcessor : BaseAlertProcessor() {
-    override val supportedType: AlertType = AlertType.WEATHER
+    abstract suspend fun getCurrentWeather(latitude: Double, longitude: Double): WeatherResult
+    abstract fun logWarning(message: String)
+    abstract fun logError(message: String, error: Throwable? = null)
+    abstract fun logInfo(message: String)
 
     override suspend fun processAlert(alert: Alert): ProcessingResult {
-        if (alert.trigger !is AlertTrigger.WeatherTrigger) {
-            return error("Invalid trigger type for weather alert")
-        }
-
-        val trigger = alert.trigger as AlertTrigger.WeatherTrigger
-        val validationResult = validateAlertSpecific(trigger)
-        if (!validationResult.first) {
-            return notTriggered(validationResult.second)
+        if (!validateAlert(alert)) {
+            return ProcessingResult.Error("Invalid alert configuration", "VALIDATION_ERROR")
         }
 
         return try {
-            // Get current weather data
-            val weatherData = getCurrentWeather(trigger.latitude, trigger.longitude)
-            val triggered = evaluateConditions(trigger.conditions, weatherData)
-            
-            if (triggered) {
-                triggered(
-                    message = "Weather conditions match alert criteria",
-                    data = mapOf(
-                        "temperature" to weatherData.temperature.toString(),
-                        "humidity" to weatherData.humidity.toString(),
-                        "description" to weatherData.description,
-                        "pressure" to weatherData.pressure.toString(),
-                        "windSpeed" to weatherData.windSpeed.toString(),
-                        "cloudiness" to weatherData.cloudiness.toString()
-                    ),
-                    metadata = mapOf(
-                        "location" to "${trigger.latitude},${trigger.longitude}",
-                        "timestamp" to weatherData.timestamp.toString()
-                    )
-                )
-            } else {
-                notTriggered("Weather conditions do not match alert criteria")
+            val trigger = alert.trigger as? AlertTrigger.WeatherTrigger
+                ?: return ProcessingResult.Error("Invalid trigger type", "INVALID_TRIGGER")
+
+            when (val result = getCurrentWeather(trigger.location.latitude, trigger.location.longitude)) {
+                is WeatherResult.Success -> {
+                    val triggeredConditions = trigger.conditions.filter { condition ->
+                        checkCondition(condition, result.data)
+                    }
+
+                    if (triggeredConditions.isEmpty()) {
+                        ProcessingResult.NotTriggered("Weather conditions not met")
+                    } else {
+                        ProcessingResult.Triggered(
+                            "Weather conditions met",
+                            mapOf(
+                                "location" to "${trigger.location.latitude},${trigger.location.longitude}",
+                                "conditions" to triggeredConditions.joinToString { it.type.toString() }
+                            )
+                        )
+                    }
+                }
+                is WeatherResult.Error -> {
+                    ProcessingResult.Error(result.message, "WEATHER_ERROR")
+                }
             }
         } catch (e: Exception) {
             logError("Error processing weather alert", e)
-            error("Failed to process weather alert: ${e.message}")
+            ProcessingResult.Error(e.message ?: "Unknown error", "PROCESSING_ERROR")
         }
     }
 
-    override fun getConfigurationSchema(): Map<String, ConfigurationField> = mapOf(
-        "latitude" to ConfigurationField(
-            type = ConfigurationFieldType.NUMBER,
-            required = true,
-            description = "Latitude of the location to monitor"
-        ),
-        "longitude" to ConfigurationField(
-            type = ConfigurationFieldType.NUMBER,
-            required = true,
-            description = "Longitude of the location to monitor"
-        ),
-        "conditions" to ConfigurationField(
-            type = ConfigurationFieldType.OBJECT,
-            required = true,
-            description = "Weather conditions to monitor",
-            options = listOf(
-                "temperature", "humidity", "pressure",
-                "windSpeed", "cloudiness", "precipitation"
-            )
-        )
-    )
+    private fun checkCondition(condition: WeatherCondition, weather: WeatherData): Boolean {
+        val currentValue = when (condition.type) {
+            WeatherConditionType.TEMPERATURE -> weather.temperature
+            WeatherConditionType.HUMIDITY -> weather.humidity
+            WeatherConditionType.WIND_SPEED -> weather.windSpeed
+            WeatherConditionType.PRECIPITATION -> weather.precipitation
+            WeatherConditionType.PRESSURE -> weather.pressure
+            WeatherConditionType.CLOUDINESS -> weather.cloudiness?.toDouble()
+            WeatherConditionType.UV_INDEX -> weather.metadata["uv_index"]?.toDoubleOrNull()
+            WeatherConditionType.AIR_QUALITY -> weather.metadata["air_quality"]?.toDoubleOrNull()
+            WeatherConditionType.CUSTOM -> condition.customValue?.toDoubleOrNull()
+        } ?: return false
 
-    protected fun validateAlertSpecific(trigger: AlertTrigger.WeatherTrigger): Pair<Boolean, String> {
-        if (trigger.latitude < -90 || trigger.latitude > 90) {
-            logWarning("Invalid latitude: ${trigger.latitude}")
-            return false to "Latitude must be between -90 and 90"
-        }
-
-        if (trigger.longitude < -180 || trigger.longitude > 180) {
-            logWarning("Invalid longitude: ${trigger.longitude}")
-            return false to "Longitude must be between -180 and 180"
-        }
-
-        if (trigger.conditions.isEmpty()) {
-            logWarning("No weather conditions specified")
-            return false to "At least one weather condition must be specified"
-        }
-
-        return true to ""
-    }
-
-    protected abstract suspend fun getCurrentWeather(latitude: Double, longitude: Double): WeatherData
-
-    protected fun evaluateConditions(conditions: List<WeatherCondition>, weatherData: WeatherData): Boolean {
-        return conditions.all { condition ->
-            when (condition) {
-                is WeatherCondition.Temperature -> evaluateValue(
-                    condition.operator,
-                    weatherData.temperature,
-                    condition.value
-                )
-                is WeatherCondition.Humidity -> evaluateValue(
-                    condition.operator,
-                    weatherData.humidity,
-                    condition.value
-                )
-                is WeatherCondition.WindSpeed -> evaluateValue(
-                    condition.operator,
-                    weatherData.windSpeed,
-                    condition.value
-                )
-                is WeatherCondition.Cloudiness -> evaluateValue(
-                    condition.operator,
-                    weatherData.cloudiness,
-                    condition.value
-                )
-                is WeatherCondition.Precipitation -> weatherData.precipitation >= condition.value
+        return condition.threshold?.let { threshold ->
+            when (condition.operator) {
+                Operator.GREATER_THAN -> currentValue > threshold
+                Operator.LESS_THAN -> currentValue < threshold
+                Operator.EQUAL_TO -> currentValue.compareTo(threshold) == 0
+                Operator.GREATER_THAN_OR_EQUAL -> currentValue >= threshold
+                Operator.LESS_THAN_OR_EQUAL -> currentValue <= threshold
+                Operator.NOT_EQUAL_TO -> currentValue.compareTo(threshold) != 0
             }
-        }
-    }
-
-    private fun evaluateValue(operator: Operator, actual: Double, expected: Double): Boolean {
-        return when (operator) {
-            Operator.GREATER_THAN -> actual > expected
-            Operator.LESS_THAN -> actual < expected
-            Operator.EQUALS -> actual == expected
-        }
+        } ?: false
     }
 }
 
-@Serializable
+sealed class WeatherResult {
+    data class Success(val data: WeatherData) : WeatherResult()
+    data class Error(val message: String, val cause: Throwable? = null) : WeatherResult()
+}
+
 data class WeatherData(
     val temperature: Double,
     val humidity: Double,
-    val pressure: Double,
     val windSpeed: Double,
-    val cloudiness: Double,
     val precipitation: Double,
-    val description: String,
-    val timestamp: Long
+    val pressure: Double,
+    val cloudiness: Int?,
+    val metadata: Map<String, String> = emptyMap()
 )

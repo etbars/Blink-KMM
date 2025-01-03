@@ -1,5 +1,7 @@
 package com.example.alertapp.api
 
+import com.example.alertapp.api.errors.ApiError
+
 sealed class ApiResponse<out T> {
     object Loading : ApiResponse<Nothing>()
     
@@ -9,7 +11,7 @@ sealed class ApiResponse<out T> {
     ) : ApiResponse<T>()
     
     data class Error(
-        val cause: ApiError,
+        val error: ApiError,
         val data: Any? = null
     ) : ApiResponse<Nothing>()
 
@@ -22,7 +24,7 @@ sealed class ApiResponse<out T> {
 
     fun getOrThrow(): T = when (this) {
         is Success -> data
-        is Error -> throw RuntimeException(cause.message)
+        is Error -> throw RuntimeException(error.message)
         is Loading -> throw IllegalStateException("Response is still loading")
     }
 
@@ -35,7 +37,7 @@ sealed class ApiResponse<out T> {
 
     suspend fun onError(block: suspend (ApiError) -> Unit): ApiResponse<T> {
         if (this is Error) {
-            block(cause)
+            block(error)
         }
         return this
     }
@@ -48,12 +50,8 @@ sealed class ApiResponse<out T> {
     }
 
     companion object {
-        fun <T> success(data: T, metadata: Map<String, Any> = emptyMap()): ApiResponse<T> =
-            Success(data, metadata)
-
-        fun error(cause: ApiError, data: Any? = null): ApiResponse<Nothing> =
-            Error(cause, data)
-
+        fun <T> success(data: T, metadata: Map<String, Any> = emptyMap()) = Success(data, metadata)
+        fun error(error: ApiError, data: Any? = null) = Error(error, data)
         fun <T> loading(): ApiResponse<T> = Loading
     }
 }

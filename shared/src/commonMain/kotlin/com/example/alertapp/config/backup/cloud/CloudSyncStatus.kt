@@ -19,16 +19,19 @@ sealed class CloudSyncStatus {
     data class Idle(
         val lastSync: Instant?,
         val pendingChanges: Int = 0
-    ) : CloudSyncStatus()
+    ) : CloudSyncStatus() {
+        companion object {
+            fun create() = Idle(null, 0)
+        }
+    }
 
     /**
      * Cloud sync is currently in progress.
-     * @param progress Progress percentage (0-100)
      * @param currentOperation Description of the current operation
      */
     data class Syncing(
-        val progress: Int,
-        val currentOperation: String
+        val currentOperation: String,
+        val progress: Int = 0
     ) : CloudSyncStatus()
 
     /**
